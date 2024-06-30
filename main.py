@@ -2,25 +2,31 @@ import torch
 
 
 class MultiHeadSelfAttention(torch.nn.Module):
-    def __init__(self, h=8, dmod=512):
+    def __init__(self, h=8, dmodel=512):
         super(MultiHeadSelfAttention, self).__init__()
         self.h = h
-        self.dmod = dmod
-        self.dk = self.h // self.dmod
+        self.dmodel = dmodel
+        self.dk = self.h // self.dmodel
+        # self.dq = self.dv = self.dk   # pretty sure the paper says this should be true...
 
-        self.Q_projections = [torch.nn.Linear(self.dk, self.dk) for _ in range(self.h)]
-        self.K_projections = [torch.nn.Linear(self.dk, self.dk) for _ in range(self.h)]
-        self.V_projections = [torch.nn.Linear(self.dk, self.dk) for _ in range(self.h)]
+        self.Q = torch.nn.Linear(self.dk, self.dk)
+        self.K = torch.nn.Linear(self.dk, self.dk)
+        self.V = torch.nn.Linear(self.dk, self.dk)
+        self.out = torch.nn.Linear(self.dmodel, self.dmodel)
 
-    def scaled_dot_product_attention(self, Q, K, V):
-        scaled_dot_prod = torch.dot(Q, K.T) / torch.sqrt(self.dk)
-        return torch.nn.functional.softmax(scaled_dot_prod) * V
+    def scaled_dot_product_attention(self, Q, K, V, mask):
+        energy = torch.dot(Q, K.T) / torch.sqrt(self.dk)
+        if mask:
+            energy = energy.masked_fill(mask == 0, torch.float("-1e8"))
+        return torch.nn.functional.softmax(energy) * V
 
-    def forward(self, Q, K, V):
-        heads = []
-        for i in range(self.h):
-            Q = self.Q_projections[i](Q)
-            K = self.K_projections[i](K)
-            V = self.V_projections[i](V)
-            heads.append(self.scaled_dot_product_attention(Q, K, V))
-        heads = torch.cat(heads)
+    def forward(self, Q, K, V, mask=None):
+        batch_size = Q.shape[0]
+
+        Q = Q.reshape(batch_size, Q.shape[1], self.h, self.dk)
+        K = Q.reshape(batch_size, K.shape[1], self.h, self.dk)
+        V = V.reshape(batch_size, V.shape[1], self.h, self.dk)
+
+        attention = self.scaled_dot_product_attention(Q, K, V, mask)
+
+        return self.out(attention)
