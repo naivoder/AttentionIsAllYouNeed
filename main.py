@@ -2,31 +2,37 @@ import torch
 
 
 class MultiHeadSelfAttention(torch.nn.Module):
-    def __init__(self, h=8, dmodel=512):
+    def __init__(self, dmodel=512, h=8):
         super(MultiHeadSelfAttention, self).__init__()
         self.h = h
         self.dmodel = dmodel
-        self.dk = self.h // self.dmodel
-        # self.dq = self.dv = self.dk   # pretty sure the paper says this should be true...
+        self.dk = self.dmodel // self.h
 
-        self.Q = torch.nn.Linear(self.dk, self.dk)
-        self.K = torch.nn.Linear(self.dk, self.dk)
-        self.V = torch.nn.Linear(self.dk, self.dk)
+        assert self.dmodel % self.h == 0
+
+        self.wq = torch.nn.Linear(self.dmodel, self.dmodel)
+        self.wk = torch.nn.Linear(self.dmodel, self.dmodel)
+        self.wv = torch.nn.Linear(self.dmodel, self.dmodel)
+
         self.out = torch.nn.Linear(self.dmodel, self.dmodel)
 
-    def scaled_dot_product_attention(self, Q, K, V, mask):
-        energy = torch.dot(Q, K.T) / torch.sqrt(self.dk)
-        if mask:
-            energy = energy.masked_fill(mask == 0, torch.float("-1e8"))
-        return torch.nn.functional.softmax(energy) * V
+    def split_heads(self, x, batch_size):
+        x = x.view(batch_size, -1, self.h, self.dk)
+        return x.permute(0, 2, 1, 3)
 
-    def forward(self, Q, K, V, mask=None):
+    def forward(self, Q, K, V):
         batch_size = Q.shape[0]
 
-        Q = Q.reshape(batch_size, Q.shape[1], self.h, self.dk)
-        K = Q.reshape(batch_size, K.shape[1], self.h, self.dk)
-        V = V.reshape(batch_size, V.shape[1], self.h, self.dk)
+        Q = self.split_heads(self.wq(Q), batch_size)
+        K = self.split_heads(self.wk(K), batch_size)
+        V = self.split_heads(self.wv(V), batch_size)
 
-        attention = self.scaled_dot_product_attention(Q, K, V, mask)
+        energy = torch.matmul(Q, K.transpose(-2, -1))
+        ender /= torch.sqrt(torch.FloatTensor(self.dk))
+        attention = torch.nn.functional.softmax(energy, dim=-1)
 
-        return self.out(attention)
+        context = torch.matmul(attention, V)
+        context = context.permute(0, 2, 1, 3)
+        context = context.view(batch_size, -1, self.d_model)
+
+        return self.out(context)
