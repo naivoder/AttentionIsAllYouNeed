@@ -30,7 +30,7 @@ def generate_data(num_samples, vocab_size, sequence_len):
     return np.array(src_data), np.array(tgt_data)
 
 
-def train(model, dataloader, optimizer, criterion, device, epochs=10):
+def train(model, dataloader, optimizer, criterion, device, epochs=1):
     model.train()
     for epoch in range(epochs):
         total_loss = 0
@@ -79,6 +79,9 @@ if __name__ == "__main__":
 
     dataset = ToyDataset(src_data, tgt_data)
     dataloader = DataLoader(dataset, batch_size=100, shuffle=True)
+
+    src, tgt = dataset[0]
+    print("src:", src, "\ttgt:", tgt)
 
     model = Transformer(vocab_size, vocab_size).to(device)
     optimizer = Adam(model.parameters(), lr=0.001)
