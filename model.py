@@ -32,7 +32,7 @@ class Transformer(torch.nn.Module):
         self,
         src_vocab_size,
         tgt_vocab_size,
-        pad_token=0,
+        pad_token="<pad>",
         dmodel=512,
         max_length=100,
         n_layers=6,
