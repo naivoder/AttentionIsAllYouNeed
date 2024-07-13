@@ -59,7 +59,7 @@ def evaluate(model, dataloader, device):
             )
             total_loss += loss.item()
 
-            if np.random.rand() < 0.1:
+            if np.random.rand() < 0.01:
                 pred = torch.argmax(output, dim=-1)
                 print("Input: ", src[0].cpu().numpy())
                 print("Target: ", tgt[0].cpu().numpy())
@@ -82,7 +82,7 @@ if __name__ == "__main__":
 
     model = Transformer(vocab_size, vocab_size).to(device)
     optimizer = Adam(model.parameters(), lr=0.001)
-    criterion = CrossEntropyLoss(ignore_index=0)
+    criterion = CrossEntropyLoss()
 
     train(model, dataloader, optimizer, criterion, device)
     evaluate(model, dataloader, device)
