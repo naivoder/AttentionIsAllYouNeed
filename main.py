@@ -6,7 +6,7 @@ class Transformer(torch.nn.Module):
         self,
         src_vocab_size,
         tgt_vocab_size,
-        src_padding,
+        pad_token=0,
         dmodel=512,
         max_length=100,
         n_layers=6,
@@ -15,7 +15,8 @@ class Transformer(torch.nn.Module):
         dropout=0.1,
     ):
         super(Transformer, self).__init__()
-        self.src_padding = src_padding
+        self.pad_token = pad_token
+
         self.encoder = Encoder(
             src_vocab_size, max_length, n_layers, dmodel, h, expand, dropout
         )
@@ -27,20 +28,21 @@ class Transformer(torch.nn.Module):
         self.to(self.device)
 
     def _get_src_mask(self, src):
-        src_mask = (src != self.src_padding)[:, None, None, :]
+        src_mask = (src != self.pad_token)[:, None, None, :]
         return src_mask.to(self.device)
 
     def _get_tgt_mask(self, tgt):
         batch_size, tgt_length = tgt.shape
         tgt_mask = torch.tril(torch.ones((tgt_length, tgt_length)))
-        tgt_mask = torch.expand(batch_size, 1, tgt_length, tgt_length)
+        tgt_mask = tgt_mask.expand(batch_size, 1, tgt_length, tgt_length)
         return tgt_mask.to(self.device)
 
     def forward(self, src, tgt):
         src_mask = self._get_src_mask(src)
         tgt_mask = self._get_tgt_mask(tgt)
         x = self.encoder(src, src_mask)
-        return self.decoder(x, tgt, tgt_mask, src_mask)
+        x = self.decoder(x, tgt, tgt_mask, src_mask)
+        return torch.nn.functional.softmax(x, -1)
 
 
 class Encoder(torch.nn.Module):
@@ -105,12 +107,12 @@ class Decoder(torch.nn.Module):
         self.to(self.device)
 
     def forward(self, src, tgt, mask, src_mask=None):
-        batch_size, src_length = src.shape
-        ids = torch.arange(0, src_length).expand(batch_size, src_length)
+        batch_size, tgt_length = tgt.shape
+        ids = torch.arange(0, tgt_length).expand(batch_size, tgt_length)
         ids = self.positional_encoding(ids.to(self.device))
-        x = self.dropout(self.input_embedding(tgt) + ids)
+        x = self.dropout(self.output_embedding(tgt) + ids)
         for decoder_block in self.layers:
-            x = decoder_block(query=x, key=src, value=src, mask=mask, src_mask=src_mask)
+            x = decoder_block(x, key=src, value=src, mask=mask, src_mask=src_mask)
         return self.out(x)
 
 
@@ -120,6 +122,7 @@ class DecoderBlock(torch.nn.Module):
         self.masked_attention = MultiHeadSelfAttention(dmodel, h)
         self.transformer = EncoderBlock(dmodel, h, expand, dropout)
         self.ln = torch.nn.LayerNorm(dmodel)
+        self.dropout = torch.nn.Dropout(dropout)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.to(self.device)
@@ -164,31 +167,47 @@ class MultiHeadSelfAttention(torch.nn.Module):
         self.to(self.device)
 
     def split_heads(self, x, batch_size):
-        return x.view(batch_size, -1, self.h, self.dk)
+        return x.reshape(batch_size, -1, self.h, self.dk)
 
     def forward(self, queries, keys, values, mask=None):
         batch_size = queries.shape[0]
 
-        queries = self.split_heads(self.wq(queries), batch_size)
-        keys = self.split_heads(self.wk(keys), batch_size)
-        values = self.split_heads(self.wv(values), batch_size)
+        queries = self.wq(self.split_heads(queries, batch_size))
+        keys = self.wk(self.split_heads(keys, batch_size))
+        values = self.wv(self.split_heads(values, batch_size))
 
         # https://youtu.be/U0s0f995w14?si=KXtErolSQ-w6OHoX
         # queries: (batch_size, query_len, h, dk)
         # keys: (batch_size, key_len, h, dk)
-        # energy: (batch_size, h, query_len, key_len)
+        # -> energy: (batch_size, h, query_len, key_len)
         energy = torch.einsum("abcd,aecd->acbe", [queries, keys])
         if mask is not None:
             energy = energy.masked_fill(mask == 0, float("-1e20"))
-        energy /= torch.sqrt(torch.FloatTensor(self.dk))
+        energy /= torch.sqrt(torch.tensor(self.dk))
 
         attention = torch.nn.functional.softmax(energy, dim=-1)
 
         # note: key_len and value_len are always equal!
         # attention: (batch_size, h, query_len, key_len)
         # values: (batch_size, value_len, h, dk)
-        # context: (batch_size, query_len, h, dk)
+        # -> context: (batch_size, query_len, h, dk)
         context = torch.einsum("abcd,adbf->acbf", [attention, values])
-        context = context.view(batch_size, -1, self.d_model)
+        context = context.reshape(batch_size, -1, self.dmodel)
 
         return self.out(context)
+
+
+if __name__ == "__main__":
+    import numpy as np
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    src_sequence_length = 10
+    tgt_sequence_length = 8
+    src_vocab_size = tgt_vocab_size = 10
+
+    src = torch.tensor(np.random.randint(0, src_vocab_size, (2, src_sequence_length)))
+    tgt = torch.tensor(np.random.randint(0, tgt_vocab_size, (2, tgt_sequence_length)))
+
+    model = Transformer(src_vocab_size, tgt_vocab_size)
+    print(torch.argmax(model(src.to(device), tgt[:, :-1].to(device)), -1))
