@@ -2,8 +2,45 @@ import torch
 
 
 class Transformer(torch.nn.Module):
-    def __init__(self):
+    def __init__(
+        self,
+        src_vocab_size,
+        tgt_vocab_size,
+        src_padding,
+        dmodel=512,
+        max_length=100,
+        n_layers=6,
+        h=8,
+        expand=4,
+        dropout=0.1,
+    ):
         super(Transformer, self).__init__()
+        self.src_padding = src_padding
+        self.encoder = Encoder(
+            src_vocab_size, max_length, n_layers, dmodel, h, expand, dropout
+        )
+        self.decoder = Decoder(
+            tgt_vocab_size, max_length, n_layers, dmodel, h, expand, dropout
+        )
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.to(self.device)
+
+    def _get_src_mask(self, src):
+        src_mask = (src != self.src_padding)[:, None, None, :]
+        return src_mask.to(self.device)
+
+    def _get_tgt_mask(self, tgt):
+        batch_size, tgt_length = tgt.shape
+        tgt_mask = torch.tril(torch.ones((tgt_length, tgt_length)))
+        tgt_mask = torch.expand(batch_size, 1, tgt_length, tgt_length)
+        return tgt_mask.to(self.device)
+
+    def forward(self, src, tgt):
+        src_mask = self._get_src_mask(src)
+        tgt_mask = self._get_tgt_mask(tgt)
+        x = self.encoder(src, src_mask)
+        return self.decoder(x, tgt, tgt_mask, src_mask)
 
 
 class Encoder(torch.nn.Module):
@@ -68,8 +105,8 @@ class Decoder(torch.nn.Module):
         self.to(self.device)
 
     def forward(self, src, tgt, mask, src_mask=None):
-        batch_size, input_length = src.shape
-        ids = torch.arange(0, input_length).expand(batch_size, input_length)
+        batch_size, src_length = src.shape
+        ids = torch.arange(0, src_length).expand(batch_size, src_length)
         ids = self.positional_encoding(ids.to(self.device))
         x = self.dropout(self.input_embedding(tgt) + ids)
         for decoder_block in self.layers:
