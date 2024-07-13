@@ -1,18 +1,25 @@
 import torch
 
 
+class Transformer(torch.nn.Module):
+    def __init__(self):
+        super(Transformer, self).__init__()
+
+
 class Encoder(torch.nn.Module):
     def __init__(
         self, vocab_size, max_length, n_layers=6, dmodel=512, h=8, expand=4, dropout=0.1
     ):
         super(Encoder, self).__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.input_embedding = torch.nn.Embedding(vocab_size, dmodel)
         self.positional_encoding = torch.nn.Embedding(max_length, dmodel)
         self.dropout = torch.nn.Dropout(dropout)
         self.layers = torch.nn.ModuleList(
-            [Transformer(dmodel, h, expand, dropout) for _ in range(n_layers)]
+            [EncoderBlock(dmodel, h, expand, dropout) for _ in range(n_layers)]
         )
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.to(self.device)
 
     def forward(self, x, mask=None):
         batch_size, input_length = x.shape
@@ -25,19 +32,17 @@ class Encoder(torch.nn.Module):
         return x
 
 
-class Decoder(torch.nn.Module):
-    def __init__(self):
-        super(Decoder, self).__init__()
-
-
-class Transformer(torch.nn.Module):
+class EncoderBlock(torch.nn.Module):
     def __init__(self, dmodel=512, h=8, expand=4, dropout=0.1):
-        super(Transformer, self).__init__()
+        super(EncoderBlock, self).__init__()
         self.attention = MultiHeadSelfAttention(dmodel, h)
         self.feed_forward = FeedForwardNetwork(dmodel, expand)
         self.ln1 = torch.nn.LayerNorm(dmodel)
         self.ln2 = torch.nn.LayerNorm(dmodel)
         self.dropout = torch.nn.Dropout(dropout)
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.to(self.device)
 
     def forward(self, query, key, value, mask=None):
         x = self.attention(query, key, value, mask)
@@ -46,11 +51,57 @@ class Transformer(torch.nn.Module):
         return self.dropout(self.ln2(x + y))
 
 
+class Decoder(torch.nn.Module):
+    def __init__(
+        self, vocab_size, max_length, n_layers=6, dmodel=512, h=8, expand=4, dropout=0.1
+    ):
+        super(Decoder, self).__init__()
+        self.output_embedding = torch.nn.Embedding(vocab_size, dmodel)
+        self.positional_encoding = torch.nn.Embedding(max_length, dmodel)
+        self.dropout = torch.nn.Dropout(dropout)
+        self.layers = torch.nn.ModuleList(
+            [DecoderBlock(dmodel, h, expand, dropout) for _ in range(n_layers)]
+        )
+        self.out = torch.nn.Linear(dmodel, vocab_size)
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.to(self.device)
+
+    def forward(self, src, tgt, mask, src_mask=None):
+        batch_size, input_length = src.shape
+        ids = torch.arange(0, input_length).expand(batch_size, input_length)
+        ids = self.positional_encoding(ids.to(self.device))
+        x = self.dropout(self.input_embedding(tgt) + ids)
+        for decoder_block in self.layers:
+            x = decoder_block(query=x, key=src, value=src, mask=mask, src_mask=src_mask)
+        return self.out(x)
+
+
+class DecoderBlock(torch.nn.Module):
+    def __init__(self, dmodel=512, h=8, expand=4, dropout=0.1):
+        super(DecoderBlock, self).__init__()
+        self.masked_attention = MultiHeadSelfAttention(dmodel, h)
+        self.transformer = EncoderBlock(dmodel, h, expand, dropout)
+        self.ln = torch.nn.LayerNorm(dmodel)
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.to(self.device)
+
+    def forward(self, x, key, value, mask, src_mask=None):
+        masked = self.masked_attention(x, x, x, mask)
+        query = self.dropout(self.ln(masked + x))
+        # can use src_mask to avoid computation on padded inputs
+        return self.transformer(query, key, value, src_mask)
+
+
 class FeedForwardNetwork(torch.nn.Module):
     def __init__(self, dmodel=512, expand=4):
         super(FeedForwardNetwork, self).__init__()
         self.h1 = torch.nn.Linear(dmodel, dmodel * expand)
         self.out = torch.nn.Linear(dmodel * expand, dmodel)
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.to(self.device)
 
     def forward(self, x):
         x = torch.nn.functional.relu(self.h1(x))
@@ -71,6 +122,9 @@ class MultiHeadSelfAttention(torch.nn.Module):
         self.wv = torch.nn.Linear(self.dk, self.dk, bias=False)
 
         self.out = torch.nn.Linear(self.dmodel, self.dmodel)
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.to(self.device)
 
     def split_heads(self, x, batch_size):
         return x.view(batch_size, -1, self.h, self.dk)
