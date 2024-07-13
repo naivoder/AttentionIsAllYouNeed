@@ -2,8 +2,27 @@ import torch
 
 
 class Encoder(torch.nn.Module):
-    def __init__(self):
+    def __init__(
+        self, vocab_size, max_length, n_layers=6, dmodel=512, h=8, expand=4, dropout=0.1
+    ):
         super(Encoder, self).__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.input_embedding = torch.nn.Embedding(vocab_size, dmodel)
+        self.positional_encoding = torch.nn.Embedding(max_length, dmodel)
+        self.dropout = torch.nn.Dropout(dropout)
+        self.layers = torch.nn.ModuleList(
+            [Transformer(dmodel, h, expand, dropout) for _ in range(n_layers)]
+        )
+
+    def forward(self, x, mask=None):
+        batch_size, input_length = x.shape
+        ids = torch.arange(0, input_length).expand(batch_size, input_length)
+        ids = self.positional_encoding(ids.to(self.device))
+        x = self.dropout(self.input_embedding(x) + ids)
+        for transformer in self.layers:
+            # special case where q, k, v are all the same
+            x = transformer(query=x, key=x, value=x, mask=mask)
+        return x
 
 
 class Decoder(torch.nn.Module):
