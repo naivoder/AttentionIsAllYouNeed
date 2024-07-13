@@ -30,7 +30,7 @@ def generate_data(num_samples, vocab_size, sequence_len):
     return np.array(src_data), np.array(tgt_data)
 
 
-def train(model, dataloader, optimizer, criterion, device, epochs=1):
+def train(model, dataloader, optimizer, criterion, device, epochs=10):
     model.train()
     for epoch in range(epochs):
         total_loss = 0
@@ -61,10 +61,14 @@ def evaluate(model, dataloader, device):
 
             if np.random.rand() < 0.01:
                 pred = torch.argmax(output, dim=-1)
-                print("Input: ", src[0].cpu().numpy())
-                print("Target: ", tgt[0].cpu().numpy())
-                print("Predicted: ", pred[0].cpu().numpy())
-                print()
+                print(
+                    "Input: ",
+                    src[0].cpu().numpy(),
+                    "Target: ",
+                    tgt[0].cpu().numpy(),
+                    "Predicted: ",
+                    pred[0].cpu().numpy(),
+                )
 
     print(f"Validation Loss: {total_loss / len(dataloader)}")
 
